@@ -77,4 +77,48 @@ python replay/tests/test_browser_flow.py   # 一次完整浏览器流程
 
 
 ## 离线回放包
-页面“下载离线回放包”调用 GET /api/bundle?uri=...&cutoff=...。ZIP 内入口 index.html 和可达的本地 HTML/PNG 均来自同一归档快照与同一截止时刻，HTML 链接递归纳入，循环与共享资源只保存一份。全部文件使用服务生成的平面路径，清洗后只引用包内路径，缺口保留惰性说明；manifest.json 保存截止时刻、入口、每项规范 URI、记录 ID、捕获日期、媒体类型、实际输出文件摘要及缺口清单。无效入口或时间整次拒绝，不下载半包。导出不修改当前归档。
+
+页面“下载离线回放包”调用 `GET /api/bundle?uri=...&cutoff=...`，得到一个交给
+**无法连接原站点**的同事直接双击 `index.html` 即可阅读的 ZIP。实现见
+`replay/app/bundle.py`，与在线回放共用 `rewriter.py` 的同一套清洗/映射逻辑。
+
+### 保证
+
+* **同一时间截点**：从入口出发，对每个相对地址/`<base>` 引用都用在线回放的同一条
+  选择规则（“不晚于截止时刻的最新一条”）解析；被移除的子页面、只在更晚时刻存在的
+  图片都不会把未来内容带回包里。包内每个可达页面与图片属于同一个截点。
+* **闭包但不回源**：HTML 链接递归纳入（可达即收录），首个合法 `<base>` 先用于解析
+  再被删除；所有链接/图片改写成**包内相对路径**（`pages/…html`、`assets/….png`、
+  子页面回链用 `../index.html`）。清洗白名单与在线回放一致，脚本/表单/事件属性/
+  绝对 URL 在打开包时同样无法触网。
+* **循环与共享只存一份**：`a ↔ b` 循环正常闭合；同一图片被多页引用只写一份
+  内容寻址文件（`assets/<sha256前32位>.png`）；清洗后逐字节相同的页面共用一个
+  平面文件（入口恒为 `index.html`，单独成组）。
+* **缺口入清单**：无同时点捕获的引用保留页面内惰性缺口标记，并在 `manifest.json`
+  的 `gaps` 中给出原因：`only-captured-after-cutoff`（被移除/仅更晚有）、
+  `not-archived`、`non-http-scheme`、`wrong-media-type`、`empty-reference`，
+  含引用来源页与原始引用值。
+* **一致且可复现**：清单逐项记录规范 URI、记录 ID、捕获日期、媒体类型、输出文件及
+  该文件实际字节的 SHA-256；`verify_bundle` 可在**没有原归档**时校验摘要、包内链接
+  可达性、无越界/绝对 URL 引用、文件与清单一一对应。ZIP 条目排序、固定时间戳与
+  统一压缩参数，使相同资料重复导出**字节级一致**，且与 WARC 内记录顺序无关。
+* **整次拒绝、不改归档**：入口在该截点不存在/不是 HTML、URI 或时间非法时，在生成
+  任何 ZIP 之前报错（API 返回 400）；导出只读取当前内存归档，之后在线 `/view/`、
+  `/raw/` 回放照常可用。
+
+### 命令行（无需起服务）
+
+```bash
+python -m app.bundle export replay/tests/demo.warc \
+    --uri http://example.com/ --cutoff 2015-10-21T07:30:00Z --out offline.zip
+python -m app.bundle verify offline.zip   # 收包方可独立校验
+```
+
+`manifest.json` 关键字段：`format`、`cutoff`、`entry_uri/entry_file/
+entry_record_id/entry_captured_at`、`resources[]`（`uri, record_id, captured_at,
+media_type, file, file_sha256, effective_base_href?`）、`gaps[]`（含 `status`、
+`referenced_by`）、`gap_references[]`、`resource_count/file_count/gap_count`。
+
+对应测试：`replay/tests/test_bundle.py`（闭包/固定截点、base 解析、循环与共享去重、
+缺口清单、摘要一致、字节复现、整次拒绝、不修改归档、在线回放并存、篡改/注入检测）。
+
