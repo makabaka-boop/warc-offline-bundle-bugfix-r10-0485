@@ -60,7 +60,7 @@ python -m uvicorn app.main:app --app-dir replay --port 8000   # WEB_ORIGIN 环�
 
 ```bash
 pip install -r replay/requirements.txt pytest httpx playwright
-pytest replay -q                 # 23 项：解析/验证/选取/重写/安全/API
+pytest replay -q                 # 31 项：解析/验证/选取/重写/离线包/安全/API
 python replay/tests/make_demo.py # 生成两次抓取的演示归档
 python replay/tests/test_browser_flow.py   # 一次完整浏览器流程
 ```
@@ -77,4 +77,8 @@ python replay/tests/test_browser_flow.py   # 一次完整浏览器流程
 
 
 ## 离线回放包
-页面“下载离线回放包”调用 GET /api/bundle?uri=...&cutoff=...。ZIP 内入口 index.html 和可达的本地 HTML/PNG 均来自同一归档快照与同一截止时刻，HTML 链接递归纳入，循环与共享资源只保存一份。全部文件使用服务生成的平面路径，清洗后只引用包内路径，缺口保留惰性说明；manifest.json 保存截止时刻、入口、每项规范 URI、记录 ID、捕获日期、媒体类型、实际输出文件摘要及缺口清单。无效入口或时间整次拒绝，不下载半包。导出不修改当前归档。
+页面“下载离线回放包”调用 `GET /api/bundle?uri=...&cutoff=...`。导出先验证入口与时间；入口在该截止时刻不存在或不是 HTML 时整次拒绝，不生成半包。
+
+ZIP 固定包含根目录 `index.html` 与 `manifest.json`，其他可达 HTML 使用确定性的 `page-<sha256(uri,16)>.html`，PNG 使用 `asset-<sha256(uri,16)>.png`。导出器从入口递归追踪清洗后的 `<a href>`，同时纳入页面中的同截止时刻 `<img src>` PNG；相对地址先按页面归档 URI 或首个合法 `<base>` 解析，`<base>` 本身会删除。循环回链和多个页面共用的图片只对应一个 URI、一个文件；不可达记录不会进入包内。
+
+所有清洗后的链接/图片都改成 ZIP 内平面相对路径，因此用 `file://` 打开也不会跳回原网站。未收录、非 http(s)、类型不符的引用保留为无 URL 的惰性缺口，并在 `manifest.json` 的 `gaps` 中说明来源页面、原始引用、解析 URI 与原因。清单中的每个资源都记录规范 URI、记录 ID、抓取时刻、媒体类型、实际输出路径、清洗后文件 SHA-256/字节数和原始记录 SHA-256；可据此核对历史版本、离线路径与摘要。ZIP 条目顺序、权限与时间戳固定，重复导出相同归档、入口和时间得到字节相同的包；导出不修改当前内存归档，在线回放继续可用。

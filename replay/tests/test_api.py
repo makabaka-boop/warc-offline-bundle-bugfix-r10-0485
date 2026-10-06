@@ -134,6 +134,29 @@ def test_import_rejects_oversize_and_malformed():
     assert "WARC/1.1" in r.json()["error"]
 
 
+def test_bundle_endpoint_and_invalid_requests():
+    _load_demo()
+    r = client.get(
+        "/api/bundle?cutoff=2020-01-01T00:00:00Z&uri=http://example.com/"
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert r.content[:4] == b"PK\x03\x04"
+
+    bad_cutoff = client.get(
+        "/api/bundle?cutoff=bad&uri=http://example.com/"
+    )
+    assert bad_cutoff.status_code == 400
+    bad_uri = client.get(
+        "/api/bundle?cutoff=2020-01-01T00:00:00Z&uri=ftp://example.com/"
+    )
+    assert bad_uri.status_code == 400
+
+    # Export is a read-only snapshot; online replay remains available.
+    online = client.get("/view/2020-01-01T00:00:00Z/http://example.com/")
+    assert online.status_code == 200
+
+
 def test_replay_headers_on_every_kind_of_response():
     _load_demo()
     for path in [

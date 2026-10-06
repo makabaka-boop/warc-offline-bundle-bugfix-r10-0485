@@ -13,7 +13,7 @@ Two completely separate steps:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup, NavigableString
@@ -131,12 +131,22 @@ DROP_WITH_CONTENT = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class ResourceReference:
+    """A sanitized link/image reference discovered in one HTML document."""
+
+    kind: str  # "link" or "image"
+    raw: str
+    resolved: str | None
+
+
 @dataclass
 class RewriteResult:
     html: str
     title: str | None
     base_href: str | None
     gaps: list[str]  # human-readable descriptions of every gap
+    references: list[ResourceReference] = field(default_factory=list)
 
 
 def sanitize_and_rewrite(
@@ -175,6 +185,7 @@ def sanitize_and_rewrite(
     document_base = base_href or archive_uri
 
     gaps: list[str] = []
+    references: list[ResourceReference] = []
 
     # 2) Structural sanitization: whitelist tags/attributes.
     for el in list(soup.find_all(True)):
@@ -213,6 +224,8 @@ def sanitize_and_rewrite(
             _gap_for(soup, img, "image gap: archived resource is not PNG")
         else:
             img["src"] = replay_url_for(resolved, cutoff, raw=True)
+        if src:
+            references.append(ResourceReference("image", src, resolved))
 
     # 4) Rewrite links: only same-cutoff HTML records stay links; links to
     #    missing/other-scheme/unsupported-type resources become inline gaps,
@@ -237,6 +250,7 @@ def sanitize_and_rewrite(
                 _text_gap_for(a, "link gap: target is not archived HTML")
             else:
                 a["href"] = replay_url_for(resolved, cutoff, raw=False)
+            references.append(ResourceReference("link", href, resolved))
 
     # 5) Serialize with the standard escaping formatter.
     if soup.body is not None:
@@ -258,7 +272,7 @@ def sanitize_and_rewrite(
         + body_html
         + "</body></html>"
     )
-    return RewriteResult(final, title, base_href, gaps)
+    return RewriteResult(final, title, base_href, gaps, references)
 
 
 # ---- helpers ---------------------------------------------------------------

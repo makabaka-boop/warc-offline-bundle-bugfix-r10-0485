@@ -249,7 +249,7 @@ async def portable_bundle(uri: str, cutoff: str):
 
     try:
         data = export_bundle(ARCHIVE, uri, cutoff)
-    except ValueError as exc:
+    except (ValueError, WARCFormatError) as exc:
         return JSONResponse(
             {"error": str(exc)}, status_code=400, headers=_no_network_headers()
         )
